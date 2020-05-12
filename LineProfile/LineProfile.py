@@ -324,6 +324,12 @@ class LineProfileLogic(ScriptedLoadableModuleLogic):
 
   def showPlot(self):
 
+    try:
+      slicer.util.getNode(self.plotChartNode.GetName())
+    except:
+      self.plotChartNode = None
+      pass
+    
     # Create chart and add plot
     if not self.plotChartNode:
       plotChartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode")
