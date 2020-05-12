@@ -40,6 +40,7 @@ class LineProfileWidget(ScriptedLoadableModuleWidget):
     ScriptedLoadableModuleWidget.setup(self)
 
     self.logic = LineProfileLogic()
+    self.logic.add2DPlotLayouts()
 
     # Instantiate and connect widgets ...
 
@@ -202,6 +203,24 @@ class LineProfileLogic(ScriptedLoadableModuleLogic):
   def __del__(self):
     self.enableAutoUpdate(False)
 
+  def sceneDataIs2DOnly(self):
+
+    volumesList = slicer.util.getNodesByClass('vtkMRMLVolumeNode')
+
+    for volume in volumesList:
+      is2D = self.imageIs2D(volume)
+      if not is2D:
+        #If we find a 3D image, bail with False
+        return False
+    
+    #No 3D images found
+    return True
+
+  def imageIs2D(self, node):
+    data = node.GetImageData()
+    dimension = data.GetDimensions()
+    return (min(dimension) == 1)
+  
   def update(self):
     self.updateOutputTable(self.inputVolumeNode, self.inputRulerNode, self.outputTableNode, self.lineResolution)
     self.updatePlot(self.outputPlotSeriesNode, self.outputTableNode, self.inputVolumeNode.GetName())
@@ -339,9 +358,119 @@ class LineProfileLogic(ScriptedLoadableModuleLogic):
       self.plotChartNode.AddAndObservePlotSeriesNodeID(self.outputPlotSeriesNode.GetID())
 
     # Show plot in layout
-    slicer.modules.plots.logic().ShowChartInLayout(self.plotChartNode)
+    if self.sceneDataIs2DOnly():
+      self.setup2DViewForNode(self.inputVolumeNode)
+      slicer.app.applicationLogic().GetSelectionNode().SetActivePlotChartID(self.plotChartNode.GetID())
+      slicer.app.applicationLogic().PropagatePlotChartSelection()
+    else:
+      slicer.modules.plots.logic().ShowChartInLayout(self.plotChartNode)
     slicer.app.layoutManager().plotWidget(0).plotView().fitToContent()
 
+  
+  def setup2DViewForNode(self, node):
+    layoutManager = slicer.app.layoutManager()
+    sliceColor = self.getSliceViewFor2DNode(node)
+    if sliceColor == 'Red':
+      layoutManager.setLayout(self.redLayoutID)
+    elif sliceColor == 'Green':
+      layoutManager.setLayout(self.greenLayoutID)
+    elif sliceColor == 'Yellow':
+      layoutManager.setLayout(self.yellowLayoutID)
+  
+  
+  def getSliceViewFor2DNode(self, node):    
+    ijk2ras = vtk.vtkMatrix4x4()
+    node.GetIJKToRASMatrix(ijk2ras)
+    scanOrder = slicer.vtkMRMLVolumeNode.ComputeScanOrderFromIJKToRAS(ijk2ras)
+    if scanOrder == 'IS' or scanOrder == 'SI':
+      return 'Red'
+    elif scanOrder == 'PA' or scanOrder == 'AP':
+      return 'Green'
+    elif scanOrder == 'LR' or scanOrder == 'RL':
+      return 'Yellow'
+
+  def add2DPlotLayouts(self):
+    
+    redLayout = (
+      "<layout type=\"horizontal\" split=\"false\" >"
+      " <item>"
+      "  <view class=\"vtkMRMLSliceNode\" singletontag=\"Red\">"
+      "   <property name=\"orientation\" action=\"default\">Axial</property>"
+      "   <property name=\"viewlabel\" action=\"default\">R</property>"
+      "   <property name=\"viewcolor\" action=\"default\">#F34A33</property>"
+      "  </view>"
+      " </item>"
+      " <item>"
+      "  <view class=\"vtkMRMLPlotViewNode\" singletontag=\"PlotView1\">"
+      "    <property name=\"viewlabel\" action=\"default\">1</property>"
+      "  </view>"
+      " </item>"
+      "</layout>")
+
+    greenLayout = (
+      "<layout type=\"horizontal\" split=\"false\" >"
+      " <item>"
+      "  <view class=\"vtkMRMLSliceNode\" singletontag=\"Green\">"
+      "   <property name=\"orientation\" action=\"default\">Coronal</property>"
+      "   <property name=\"viewlabel\" action=\"default\">G</property>"
+      "   <property name=\"viewcolor\" action=\"default\">#6EB04B</property>"
+      "  </view>"
+      " </item>"
+      " <item>"
+      "  <view class=\"vtkMRMLPlotViewNode\" singletontag=\"PlotView1\">"
+      "    <property name=\"viewlabel\" action=\"default\">1</property>"
+      "  </view>"
+      " </item>"
+      "</layout>")
+
+    yellowLayout = (
+      "<layout type=\"horizontal\" split=\"false\" >"
+      " <item>"
+      "  <view class=\"vtkMRMLSliceNode\" singletontag=\"Yellow\">"
+      "   <property name=\"orientation\" action=\"default\">Sagittal</property>"
+      "   <property name=\"viewlabel\" action=\"default\">Y</property>"
+      "   <property name=\"viewcolor\" action=\"default\">#EDD54C</property>"
+      "  </view>"
+      " </item>"
+      " <item>"
+      "  <view class=\"vtkMRMLPlotViewNode\" singletontag=\"PlotView1\">"
+      "    <property name=\"viewlabel\" action=\"default\">1</property>"
+      "  </view>"
+      " </item>"
+      "</layout>")    
+
+    # Built-in layout IDs are all below 100, so you can choose any large random number
+    # for your custom layout ID.
+    self.redLayoutID=601
+    self.greenLayoutID=602
+    self.yellowLayoutID=603
+
+    layoutManager = slicer.app.layoutManager()
+    layoutManager.layoutLogic().GetLayoutNode().AddLayoutDescription(self.redLayoutID, redLayout)  
+    layoutManager.layoutLogic().GetLayoutNode().AddLayoutDescription(self.greenLayoutID, greenLayout)
+    layoutManager.layoutLogic().GetLayoutNode().AddLayoutDescription(self.yellowLayoutID, yellowLayout)
+
+    # Add button to layout selector toolbar for this custom layout
+    viewToolBar = slicer.util.mainWindow().findChild('QToolBar', 'ViewToolBar')
+    layoutMenu = viewToolBar.widgetForAction(viewToolBar.actions()[0]).menu()
+    layoutSwitchActionParent = layoutMenu  # use `layoutMenu` to add inside layout list, use `viewToolBar` to add next the standard layout list
+    layoutSwitchAction = layoutSwitchActionParent.addAction("Red Plot") # add inside layout list
+    layoutSwitchAction.setData(self.redLayoutID)
+    layoutSwitchAction.setIcon(qt.QIcon(':Icons/Go.png'))
+    layoutSwitchAction.setToolTip('Red Plot view')
+    layoutSwitchAction.connect('triggered()', lambda layoutId = self.redLayoutID: slicer.app.layoutManager().setLayout(layoutId)) 
+
+    layoutSwitchAction = layoutSwitchActionParent.addAction("Green Plot") # add inside layout list
+    layoutSwitchAction.setData(self.greenLayoutID)
+    layoutSwitchAction.setIcon(qt.QIcon(':Icons/Go.png'))
+    layoutSwitchAction.setToolTip('Green Plot view')
+    layoutSwitchAction.connect('triggered()', lambda layoutId = self.greenLayoutID: slicer.app.layoutManager().setLayout(layoutId))  
+
+    layoutSwitchAction = layoutSwitchActionParent.addAction("Yellow Plot") # add inside layout list
+    layoutSwitchAction.setData(self.yellowLayoutID)
+    layoutSwitchAction.setIcon(qt.QIcon(':Icons/Go.png'))
+    layoutSwitchAction.setToolTip('Yellow Plot view')
+    layoutSwitchAction.connect('triggered()', lambda layoutId = self.yellowLayoutID: slicer.app.layoutManager().setLayout(layoutId))                          
 
 class LineProfileTest(ScriptedLoadableModuleTest):
   """
